@@ -148,15 +148,27 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
          */
         const updateLiveChatTranscriptRecord = (
             mapObjectsToAttachToTranscript,
-            liveChatTranscriptRecordID
+            liveChatTranscriptRecordID,
+            liveChatTranscriptRecordExisting
         ) => {
             return new Promise((resolve, reject) => {
                 try {
                     let liveChatTranscriptRecord = new sforce.SObject("LiveChatTranscript");
                     liveChatTranscriptRecord.Id = liveChatTranscriptRecordID;
-                    liveChatTranscriptRecord.CaseId = _.get(mapObjectsToAttachToTranscript, 'Case.id');
-                    liveChatTranscriptRecord.ContactId = _.get(mapObjectsToAttachToTranscript, 'Contact.id');
-                    liveChatTranscriptRecord.LeadId = _.get(mapObjectsToAttachToTranscript, 'Lead.id');
+                    let hasSomeUpdate = false;
+                    if(_.isEmpty(liveChatTranscriptRecordExisting.CaseId)){
+                        liveChatTranscriptRecord.CaseId = _.get(mapObjectsToAttachToTranscript, 'Case.id');
+                        hasSomeUpdate=true;
+                    }
+                    if(_.isEmpty(liveChatTranscriptRecordExisting.ContactId)){
+                        liveChatTranscriptRecord.ContactId = _.get(mapObjectsToAttachToTranscript, 'Contact.id');
+                        hasSomeUpdate=true;
+                    }
+                    if(_.isEmpty(liveChatTranscriptRecordExisting.LeadId)){
+                        liveChatTranscriptRecord.LeadId = _.get(mapObjectsToAttachToTranscript, 'Lead.id');
+                        hasSomeUpdate=true;
+                    }
+                    if(hasSomeUpdate){
                     let updateResult = sforce.connection.update([liveChatTranscriptRecord]);
                     let mapUpdateResults = {};
                     updateResult.forEach(eachUpdateResult => {
@@ -172,6 +184,9 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                         }
                     });
                     resolve(mapUpdateResults);
+                    }
+                    else
+                    resolve(null);
                 } catch (ex) {
                     reject(ex);
                 }
@@ -222,9 +237,9 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                     );
                     let records = result.getArray("records");
                     let liveChatTranscriptRecord = _.get(records, 0);
-                    let hasInfo = (liveChatTranscriptRecord.CaseId || liveChatTranscriptRecord.LeadId ||
+                    let hasInfo = (liveChatTranscriptRecord.CaseId && liveChatTranscriptRecord.LeadId &&
                         liveChatTranscriptRecord.ContactId)
-                    resolve({recordId:recordId,isEmpty:_.isEmpty(hasInfo)});                        
+                    resolve({recordId:recordId,isEmpty:_.isEmpty(hasInfo),record:liveChatTranscriptRecord});                        
                 } catch (ex) {
                     reject(ex);
                 }
@@ -234,8 +249,8 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
         /**
          * Handler for the ChatEnd of LiveAgent , ensures the sibling subtabs open alongside will be mapped to LiveAgentTranscript.
          * 
-         * @param {Object} result 
-         * @returns 
+         * @param {Object} result with chatkey and success parameters. 
+         * @returns {Promise} success or failure of the refresh after update.
          */
         const handleChatEnd = result => {
             return new Promise((resolve, reject) => {
@@ -246,18 +261,23 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                     } = _.get(primaryTabByChatKey, result.chatKey);
                     delete primaryTabByChatKey[result.chatKey];
                     checkLiveChatTranscriptStatus(recordId)
-                        .then(({isEmpty}) => {
+                        .then(({isEmpty,record}) => {
                             if (isEmpty) {
                                 getSiblingTabObjectInfos(tabId)
                                     .then(mapObjectsToAttachToTranscript => {
                                         return updateLiveChatTranscriptRecord(
                                             mapObjectsToAttachToTranscript,
-                                            recordId
+                                            recordId,
+                                            record
                                         );
                                     })
                                     .then(updateresults => {
-                                        sconsole.disableTabClose(false,tabId,null);
-                                        return refreshDetailsByTabId(tabId, false);
+                                        if(updateresults){
+                                            sconsole.disableTabClose(false,tabId,null);
+                                            return refreshDetailsByTabId(tabId, false);
+                                        }
+                                        else
+                                        return null;
                                     })
                             }
                         });
@@ -267,6 +287,12 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
        
+        /**
+         * Promise wrapper to get the details of the chat based on chatkey
+         * 
+         * @param {Promise} Promise object with the chat details as a result. 
+         * @returns 
+         */
         const getDetailsByChatKey = (chatKey) => {
             return new Promise((resolve, reject) => {
                 try {
@@ -279,12 +305,26 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
 
+        /**
+         * Promise wrapper to get the list of all engaged chats
+         * 
+         * @param {Promise} Promise object with the list of chatkeys of engaged chats as a result.
+         * @returns 
+         */
         const getEngagedChats = () => {
             return new Promise((resolve, reject) => {
                 schat.getEngagedChats(result => resolve(result.chatKey));
             });
         }
 
+         /**
+         * Execution chain which monitors the chats for appropriate assignments
+         * Flow of execution is 
+         *  - Get existing active or engaged chats with the details        
+         *  - Get the object information from the tabs
+         *  - Get the liveagenttranscript status
+         *  - prepare the primaryTabByChatKey variable with the key as chatkey and value with the tabId,recordId and isEmpty attributes to be used at chatEnd.
+         */
         const monitorChats = () => {
             chatInterval = setInterval(() => {
                 getEngagedChats()
@@ -302,10 +342,10 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                                     _.each(chatKeyresults, item => {
                                         primiaryTabIdsObjectInfo.push(
                                             getObjectInfoFromTabId(item.primaryTabId));
-                                        primaryTabByChatKey[item.details.chatKey] = {
-                                            ...primaryTabByChatKey[item.details.chatKey],
-                                            tabId: item.primaryTabId                                            
-                                        };
+                                            if(primaryTabByChatKey.hasOwnProperty(item.details.chatKey))
+                                                _.assign(primaryTabByChatKey[item.details.chatKey],{tabId: item.primaryTabId});
+                                            else
+                                                primaryTabByChatKey[item.details.chatKey] = {tabId: item.primaryTabId};                                       
                                         chatKeyByTabId[item.primaryTabId] = item.details.chatKey;
                                     });
                                     if (chatKeyresults.length > 0) {                                        
@@ -318,14 +358,10 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                                                             chatKeyByTabId,
                                                             eachObjectResult.tabId
                                                         );
-                                                        primaryTabByChatKey[
-                                                            chatKeyToBeAssigned] = {
-                                                            ...primaryTabByChatKey[
-                                                                chatKeyToBeAssigned
-                                                            ],
-                                                            recordId: eachObjectResult
-                                                                .id                                                            
-                                                        };
+                                                        if(primaryTabByChatKey.hasOwnProperty(chatKeyToBeAssigned))
+                                                        _.assign(primaryTabByChatKey[chatKeyToBeAssigned],{recordId: eachObjectResult.id});
+                                                        else
+                                                        primaryTabByChatKey[chatKeyToBeAssigned] = {recordId: eachObjectResult.id};                                                        
                                                         chatKeyByRecordId[eachObjectResult
                                                                 .id]=chatKeyToBeAssigned;
                                                         liveChatTranscriptStatusInfo.push(checkLiveChatTranscriptStatus(eachObjectResult
@@ -344,14 +380,10 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
                                                             chatKeyByRecordId,
                                                             eachObjectResult.recordId
                                                         );
-                                                        primaryTabByChatKey[
-                                                            chatKeyToBeAssigned] = {
-                                                            ...primaryTabByChatKey[
-                                                                chatKeyToBeAssigned
-                                                            ],
-                                                            isEmpty: eachObjectResult
-                                                                .isEmpty                                                            
-                                                        };
+                                                        if(primaryTabByChatKey.hasOwnProperty(chatKeyToBeAssigned))
+                                                        _.assign(primaryTabByChatKey[chatKeyToBeAssigned],{isEmpty: eachObjectResult.isEmpty});
+                                                        else
+                                                        primaryTabByChatKey[chatKeyToBeAssigned] = {isEmpty: eachObjectResult.isEmpty};                                                        
                                                         if(eachObjectResult.isEmpty)
                                                             sconsole.disableTabClose(true,primaryTabByChatKey[chatKeyToBeAssigned].tabId,re=>console.log(re));
                                                         else
@@ -372,8 +404,10 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
 
 
 
-        // Handle Chat End.
+        // Chat end Handler assignment
         schat.onChatEnded(handleChatEnd);    
+
+        // initiate monitor of chats.
         monitorChats();
     </script>
 
