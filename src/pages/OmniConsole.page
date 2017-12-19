@@ -10,42 +10,41 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
 
     <script type="text/javascript">
         sforce.connection.sessionId = '{!GETSESSIONID()}';
-        var schat = sforce.console.chat;
-        var sconsole = sforce.console;
+        const schat = sforce.console.chat;
+        const sconsole = sforce.console;
 
-        function getLiveChatTranscriptTabID() {
-            return new Promise(function (resolve, reject) {
-                sconsole.getFocusedPrimaryTabId(function (result) {
+        const getLiveChatTranscriptTabID = () => {
+            return new Promise((resolve, reject) => {
+                sconsole.getFocusedPrimaryTabId(result => {
                     resolve(result.id);
                 });
             });
         }
 
-        function getLiveChatTranscriptRecordID() {
-            return new Promise(function (resolve, reject) {
-                sconsole.getFocusedPrimaryTabObjectId(function (result) {
+        const getLiveChatTranscriptRecordID = () => {
+            return new Promise((resolve, reject) => {
+                sconsole.getFocusedPrimaryTabObjectId(result => {
                     resolve(result.id);
                 });
             });
         }
 
-        function getRelatedObjectsIds(liveChatTranscriptTabId) {
-            return new Promise(function (resolve, reject) {
-                sconsole.getSubtabIds(liveChatTranscriptTabId, function (resulttabs) {
-                    var promisearray = [];
-                    resulttabs.forEach(function (eachSubTabId) {
-                        promisearray.push(getObjectInfoFromTabId(eachSubTabId));
+        const getRelatedObjectsIds = liveChatTranscriptTabId => {
+            return new Promise((resolve, reject) => {
+                sconsole.getSubtabIds(liveChatTranscriptTabId, resulttabs => {
+                    let promises = _.map(resulttabs, eachSubTabId => {
+                        return getObjectInfoFromTabId(eachSubTabId);
                     });
-                    Promise.all(promisearray).then(function (lstPageInformation) {
-                        lstPageInformation = lstPageInformation.filter(function (pageInfo) {
+                    Promise.all(promises).then(lstPageInformation => {
+                        lstPageInformation = lstPageInformation.filter(pageInfo => {
                             return pageInfo;
                         });
-                        var mapObjectsToAttachToTranscript = _.mapKeys(
+                        let mapObjectsToAttachToTranscript = _.mapKeys(
                             _.flatten(
                                 _.filter(
                                     _.values(
                                         _.map(_.groupBy(lstPageInformation, "object"),
-                                            function (item) {
+                                            item => {
                                                 if (item.length === 1) return item;
                                             })
                                     )
@@ -60,22 +59,22 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
 
-        function updateLiveChatTranscriptRecord(
+        const updateLiveChatTranscriptRecord = (
             mapObjectsToAttachToTranscript,
             liveChatTranscriptRecordID
-        ) {
-            return new Promise(function (resolve, reject) {
-                var liveChatTranscriptRecord = new sforce.SObject("LiveChatTranscript");
+        ) => {
+            return new Promise((resolve, reject) => {
+                let liveChatTranscriptRecord = new sforce.SObject("LiveChatTranscript");
                 liveChatTranscriptRecord.Id = liveChatTranscriptRecordID;
-                _.keys(mapObjectsToAttachToTranscript, function (eachObjectName) {
+                _.keys(mapObjectsToAttachToTranscript, eachObjectName => {
                     liveChatTranscriptRecord[eachObjectName + "Id"] = _.get(
                         mapObjectsToAttachToTranscript[eachObjectName],
                         "id"
                     );
                 });
-                var updateResult = sforce.connection.update([liveChatTranscriptRecord]);
-                var mapUpdateResults = {};
-                updateResult.forEach(function (eachUpdateResult) {
+                let updateResult = sforce.connection.update([liveChatTranscriptRecord]);
+                let mapUpdateResults = {};
+                updateResult.forEach(eachUpdateResult => {
                     if (eachUpdateResult.getBoolean("success")) {
                         mapUpdateResults[eachUpdateResult.id] = {
                             success: true
@@ -91,11 +90,11 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
 
-        function getObjectInfoFromTabId(tabId) {
-            return new Promise(function (resolve, reject) {
-                sconsole.getPageInfo(tabId, function (pageinformation) {
+        const getObjectInfoFromTabId = tabId=>{
+            return new Promise((resolve, reject) => {
+                sconsole.getPageInfo(tabId, pageinformation => {
                     if (pageinformation.hasOwnProperty("objectName")) {
-                        var requiredPageInfo = {
+                        let requiredPageInfo = {
                             id: pageinformation.objectId,
                             object: pageinformation.objectName
                         };
@@ -107,23 +106,24 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
 
-        function handleChatEnd() {
-            return new Promise(function (resolve, reject) {
-                schat.onChatEnded(function (result) {
+        const handleChatEnd = () => {
+            return new Promise((resolve, reject) => {
+                schat.onChatEnded(result => {
                     Promise.all(
                         [getLiveChatTranscriptTabID(),
-                        getLiveChatTranscriptRecordID()]
-                    ).then(function (results) {
-                        var tabId = results[0];
-                        var recordId = results[1];
-                        getRelatedObjectsIds(getLiveChatTranscriptTabID)
-                            .then(function (mapObjectsToAttachToTranscript) {
+                            getLiveChatTranscriptRecordID()
+                        ]
+                    ).then(values => {
+                        let tabId = values[0];
+                        let recordId = values[1];
+                        getRelatedObjectsIds(tabId)
+                            .then(mapObjectsToAttachToTranscript => {
                                 return updateLiveChatTranscriptRecord(
                                     mapObjectsToAttachToTranscript,
                                     recordId
                                 );
                             })
-                            .then(function (updateresults) {
+                            .then(updateresults => {
                                 console.log(updateresults);
                             });
                     });
@@ -131,7 +131,7 @@ Description: Automatically attaches Case or Contact or Lead to Transcript record
             });
         }
 
-        // var onEnclosingPrimaryTabClose = function (result) {
+        // let onEnclosingPrimaryTabClose = result => {
         //     alert("Am throwing a dummy alert now");
         // };
 
